@@ -41,35 +41,43 @@
   }
   .state.active { display: flex; }
 
-  /* ---------- idle ---------- */
-  #state-idle {
-    background: var(--cm-blue);
-    color: white;
+  /* ---------- corner logo — shown over every screen ---------- */
+  .corner-logo {
+    position: absolute; top: 10px; left: 12px; z-index: 5;
+    display: flex; align-items: center; gap: 6px;
   }
-  #state-idle .mark {
-    font-size: 22px;
-    font-weight: 700;
-    letter-spacing: 0.3px;
-    margin-bottom: 4px;
+  .corner-logo img { width: 22px; height: 22px; border-radius: 5px; background: white; padding: 1px; }
+  .corner-logo span { font-size: 11px; font-weight: 700; letter-spacing: 0.4px; color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.25); }
+  #state-processing .corner-logo span { color: var(--cm-ink); text-shadow: none; }
+
+  /* ---------- idle — styled like a real transit "TAP" validator ---------- */
+  #state-idle { padding: 0; }
+  #state-idle .idle-top {
+    flex: 0 0 42%;
+    width: 100%;
+    background: #E7F1FB;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
   }
-  #state-idle .mark span { color: #AFC7E3; }
-  #state-idle .prompt {
-    font-size: 15px;
-    color: #DCE6F2;
-    margin-top: 10px;
-  }
-  #state-idle .icon-row {
-    display: flex;
-    gap: 28px;
-    margin-top: 18px;
-  }
-  #state-idle .icon-row div {
-    width: 46px; height: 46px;
-    border: 2px solid #AFC7E3;
-    border-radius: 8px;
+  #state-idle .idle-top .arrow-badge {
+    width: 34px; height: 34px; border-radius: 50%;
+    background: var(--cm-blue); color: white;
     display: flex; align-items: center; justify-content: center;
-    font-size: 20px;
+    margin-bottom: 6px;
   }
+  #state-idle .idle-top .prompt {
+    font-size: 15px; font-weight: 700; color: var(--cm-blue-dark);
+  }
+  #state-idle .idle-bottom {
+    flex: 1;
+    width: 100%;
+    background: var(--cm-blue);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 6px;
+  }
+  #state-idle .tap-wordmark {
+    font-size: 34px; font-weight: 800; letter-spacing: 3px; color: white;
+  }
+  #state-idle .tap-icon { width: 58px; height: 58px; }
 
   /* ---------- out of service ---------- */
   #state-out-of-service {
@@ -99,34 +107,38 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   #state-processing .label { font-size: 15px; color: #566473; }
 
-  /* ---------- result (approved/denied share layout) ---------- */
+  /* ---------- result — big full-screen "Go" / "Stop" look, like a real validator ---------- */
+  #state-approved { background: var(--cm-green); }
+  #state-denied { background: var(--cm-red); }
+
   .state.result .badge {
-    width: 64px; height: 64px;
+    width: 84px; height: 84px;
     border-radius: 50%;
+    background: rgba(255,255,255,0.18);
+    border: 3px solid white;
     display: flex; align-items: center; justify-content: center;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
   }
-  .state.result .badge svg { width: 32px; height: 32px; }
-  #state-approved .badge { background: var(--cm-green); }
-  #state-denied .badge { background: var(--cm-red); }
+  .state.result .badge svg { width: 46px; height: 46px; }
 
   .state.result .headline {
-    font-size: 20px;
-    font-weight: 700;
+    font-size: 40px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    color: white;
   }
-  #state-approved .headline { color: var(--cm-green); }
-  #state-denied .headline { color: var(--cm-red); }
 
   .state.result .detail {
-    font-size: 14px;
-    color: #566473;
-    margin-top: 6px;
+    font-size: 15px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.92);
+    margin-top: 8px;
   }
   .state.result .balance {
     margin-top: 12px;
     font-size: 13px;
-    color: var(--cm-ink);
-    background: #F1F4F8;
+    color: white;
+    background: rgba(255,255,255,0.2);
     border-radius: 6px;
     padding: 5px 12px;
   }
@@ -160,42 +172,56 @@
 <div id="screen">
 
   <div id="state-idle" class="state active">
-    <div class="mark">CITY <span>METRO</span></div>
-    <div class="prompt">Tap your card or scan your ticket</div>
-    <div class="icon-row">
-      <div>▢▢</div>
-      <div>▤</div>
+    <div class="corner-logo"><img src="https://alerts.citymetro.xyz/logo.png" alt="" /><span style="color:var(--cm-blue-dark)">CITY METRO</span></div>
+    <div class="idle-top">
+      <div class="arrow-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M12 4v14M6 13l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div class="prompt">Tap Below or Scan Ticket</div>
+    </div>
+    <div class="idle-bottom">
+      <svg class="tap-icon" viewBox="0 0 64 64" fill="none">
+        <circle cx="32" cy="32" r="30" stroke="white" stroke-width="2" opacity="0.6"/>
+        <path d="M20 40 L34 26 L42 34 L28 48 Z" fill="none" stroke="white" stroke-width="2.5" stroke-linejoin="round"/>
+        <path d="M40 22c2 2 3 4 3 7s-1 5-3 7" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.85"/>
+        <path d="M45 18c3 3 5 7 5 11s-2 8-5 11" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+      </svg>
+      <div class="tap-wordmark">TAP</div>
     </div>
   </div>
 
   <div id="state-out-of-service" class="state">
+    <div class="corner-logo"><img src="https://alerts.citymetro.xyz/logo.png" alt="" /><span>CITY METRO</span></div>
     <div class="mark">Out of Service</div>
     <div class="prompt">This validator is temporarily unavailable.<br>Please board and tap at the next validator.</div>
   </div>
 
   <div id="state-processing" class="state">
+    <div class="corner-logo"><img src="https://alerts.citymetro.xyz/logo.png" alt="" /><span>CITY METRO</span></div>
     <div class="spinner"></div>
     <div class="label">Checking fare…</div>
   </div>
 
   <div id="state-approved" class="state result">
+    <div class="corner-logo"><img src="https://alerts.citymetro.xyz/logo.png" alt="" /><span>CITY METRO</span></div>
     <div class="badge">
       <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3">
         <path d="M4 12l5 5L20 6" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </div>
-    <div class="headline">Approved</div>
+    <div class="headline">GO</div>
     <div class="detail" id="approved-detail">Fare deducted</div>
     <div class="balance" id="approved-balance"></div>
   </div>
 
   <div id="state-denied" class="state result">
+    <div class="corner-logo"><img src="https://alerts.citymetro.xyz/logo.png" alt="" /><span>CITY METRO</span></div>
     <div class="badge">
       <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3">
         <path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/>
       </svg>
     </div>
-    <div class="headline">Not Approved</div>
+    <div class="headline">STOP</div>
     <div class="detail" id="denied-detail">Insufficient balance</div>
   </div>
 
@@ -248,10 +274,38 @@
   pollValidatorStatus();
   setInterval(pollValidatorStatus, 30000);
 
+  // ---- sound effects (generated tones, no audio files needed) ----
+  function playTone(freq, durationSec, type = "sine", startTime = 0, volume = 0.25) {
+    try {
+      const ctx = playTone._ctx || (playTone._ctx = new (window.AudioContext || window.webkitAudioContext)());
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const t0 = ctx.currentTime + startTime;
+      gain.gain.setValueAtTime(volume, t0);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0 + durationSec);
+      osc.start(t0);
+      osc.stop(t0 + durationSec);
+    } catch (e) { /* AudioContext can fail before a user gesture on some browsers — silently skip */ }
+  }
+  function playApprovedSound() {
+    // Two-tone ascending chime, like most real transit validators.
+    playTone(880, 0.14, "sine", 0);
+    playTone(1318, 0.18, "sine", 0.12);
+  }
+  function playDeniedSound() {
+    // Low buzz, distinct and unmistakable from the approved chime.
+    playTone(180, 0.35, "square", 0, 0.15);
+  }
+
   let resultTimer = null;
   function showResult(name, { detailText, balanceText } = {}) {
     clearTimeout(resultTimer);
     showState(name);
+    if (name === "approved") { playApprovedSound(); } else if (name === "denied") { playDeniedSound(); }
     if (name === "approved") {
       document.getElementById("approved-detail").textContent = detailText || "Fare deducted";
       document.getElementById("approved-balance").textContent = balanceText || "";
