@@ -46,7 +46,7 @@
     position: absolute; top: 10px; left: 12px; z-index: 5;
     display: flex; align-items: center; gap: 6px;
   }
-  .corner-logo img { width: 22px; height: 22px; }
+  .corner-logo img { width: 22px; height: 22px; border-radius: 5px; background: white; padding: 1px; }
   .corner-logo span { font-size: 11px; font-weight: 700; letter-spacing: 0.4px; color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.25); }
   #state-processing .corner-logo span { color: var(--cm-ink); text-shadow: none; }
 
@@ -172,7 +172,7 @@
 <div id="screen">
 
   <div id="state-idle" class="state active">
-    <div class="corner-logo"><img src="/logo.png" alt="" /><span style="color:var(--cm-blue-dark)">City Metro</span></div>
+    <div class="corner-logo"><img src="https://alerts.citymetro.xyz/logo.png" alt="" /><span style="color:var(--cm-blue-dark)">CITY METRO</span></div>
     <div class="idle-top">
       <div class="arrow-badge">
         <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M12 4v14M6 13l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -226,26 +226,36 @@
   </div>
 
   <!-- Dev/test overlay: press "d" on a keyboard to show. Not part of the
-        production kiosk build — lets you exercise the flow without real
-        reader hardware attached. Remove before shipping to the device. -->
+       production kiosk build — lets you exercise the flow without real
+       reader hardware attached. Remove before shipping to the device. -->
   <div id="devpanel">
-    <input id="dev-card" placeholder="Card number" />
-    <button onclick="devTap()">Simulate Tap</button>
-    <input id="dev-code" placeholder="Ticket code" />
-    <button onclick="devScan()">Simulate Scan</button>
-    <div class="hint">press "d" to hide</div>
+    <input id="dev-card" placeholder="NFC tag value (BP… or UID hex)" />
+    <button onclick="devTap()">Simulate NFC Tap</button>
+    <input id="dev-code" placeholder="Barcode/QR value (card or ticket)" />
+    <button onclick="devScan()">Simulate Barcode Scan</button>
+    <div class="hint">Ctrl+Shift+D to hide</div>
   </div>
 
 </div>
 
 <script>
   // ---- configuration ----
-  const API_BASE = "https://api.mybrickpass.citymetro.xyz";
-  const VALIDATOR_ID = "VAL100-01"; // set per physical unit
+  const API_BASE = "https://brickpassv3.felixfeger46.workers.dev";
+  // Admin portal -> Devices -> "Register a Device" (kind: Validator) gives you both of these.
+  const VALIDATOR_ID = "VAL100-01";                       // must equal the Device ID you registered
+  const DEVICE_KEY = "dk_PASTE_THE_KEY_FROM_THE_ADMIN_PORTAL";
+  // What THIS unit's readers really are. Reported to the API on boot; the API
+  // then only accepts scans of these kinds from this device.
+  const DEVICE_MODEL = "Access IS VAL100";
+  const FIRMWARE_VERSION = "kiosk-page-1";
+  const MODULES = ["nfc", "barcode_2d"];                  // VAL100: NFC/RFID + 2D barcode (reads QR)
+  const WEDGE_ENABLED = true;                             // also accept readers that "type" scans like a keyboard
 
   // ---- state machine ----
   const states = ["idle", "processing", "approved", "denied", "out-of-service"];
   let isOutOfService = false;
+  let deviceProblem = null;   // set when registration fails (bad key, revoked, bad module list)
+  let registered = false;
 
   function showState(name) {
     for (const s of states) {
@@ -257,6 +267,7 @@
   // out_of_service, the idle screen switches over within one poll interval —
   // no reboot or redeploy of the kiosk needed.
   async function pollValidatorStatus() {
+    if (!registered) await registerDevice();
     try {
       const res = await fetch(`${API_BASE}/validators/${VALIDATOR_ID}/status`);
       const data = await res.json();
@@ -268,9 +279,40 @@
     // interrupt an in-progress tap/scan result).
     const current = states.find(s => document.getElementById(`state-${s}`).classList.contains("active"));
     if (current === "idle" || current === "out-of-service") {
-      showState(isOutOfService ? "out-of-service" : "idle");
+      const unavailable = isOutOfService || deviceProblem;
+      document.querySelector("#state-out-of-service .prompt").innerHTML = deviceProblem
+        ? `Reader setup problem:<br>${deviceProblem}`
+        : "This validator is temporarily unavailable.<br>Please board and tap at the next validator.";
+      showState(unavailable ? "out-of-service" : "idle");
     }
   }
+
+  // ---- API helper: every call carries this device's key ----
+  async function api(path, body) {
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-device-key": DEVICE_KEY },
+      body: JSON.stringify(body),
+    });
+    let data = {};
+    try { data = await res.json(); } catch (e) {}
+    return { status: res.status, data };
+  }
+
+  // Tell the API which reader modules this unit has. Until this succeeds the
+  // API rejects scans from this device (module_not_registered).
+  async function registerDevice() {
+    try {
+      const { status, data } = await api("/device/register", { model: DEVICE_MODEL, firmware: FIRMWARE_VERSION, modules: MODULES });
+      if (status === 200) { registered = true; deviceProblem = null; return; }
+      deviceProblem = status === 401
+        ? "device key rejected (check DEVICE_KEY, or the device was revoked)"
+        : (data.error || `registration failed (${status})`);
+    } catch (e) {
+      // Offline — leave deviceProblem alone and retry on the next poll.
+    }
+  }
+
   pollValidatorStatus();
   setInterval(pollValidatorStatus, 30000);
 
@@ -330,26 +372,31 @@
     expired: () => "Ticket expired",
     unknown_ticket: () => "Ticket not recognized",
     validator_out_of_service: () => "This validator is out of service",
+    module_not_registered: () => "Reader not registered — see staff",
   };
 
-  // ---- bridge functions: call these from the reader SDK / native shell ----
-  // Wire the HID VAL100's onboard NFC and barcode callbacks to these two
-  // entry points. Everything else on this page is UI only.
+  function describe(res) {
+    if (res.data.error) return res.status === 401 ? "Device key rejected — see staff" : res.data.error;
+    return (REASON_TEXT[res.data.reason] || (() => res.data.reason || "Try again"))(res.data);
+  }
 
-  window.onCardTapped = async function (cardNumber) {
+  // ---- reader entry points ----
+  // Whatever glue connects the VAL100's readers to this page calls ONE of these:
+  //   onCardTapped(value)     NFC/RFID read  — value is a BP number OR the tag's UID (hex)
+  //   onBarcodeScanned(value) barcode/QR scan — a BP number (card) or a ticket code
+  //   onTicketScanned(code)   explicitly a ticket
+  // Anything that "types" scans like a keyboard is handled by the wedge listener below.
+
+  async function handleCard(module, value) {
     if (isOutOfService) { showState("out-of-service"); return; }
+    if (!registered) await registerDevice();
     showState("processing");
     try {
-      const res = await fetch(`${API_BASE}/validate`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ card_number: cardNumber, validator_id: VALIDATOR_ID }),
-      });
-      const data = await res.json();
-      const text = (REASON_TEXT[data.reason] || (() => data.reason))(data);
-      if (data.approved) {
-        const balanceText = "new_balance_cents" in data
-          ? `Balance: $${(data.new_balance_cents / 100).toFixed(2)}`
+      const res = await api("/validate", { module, value });
+      const text = describe(res);
+      if (res.data.approved) {
+        const balanceText = "new_balance_cents" in res.data
+          ? `Balance: $${(res.data.new_balance_cents / 100).toFixed(2)}`
           : "";
         showResult("approved", { detailText: text, balanceText });
       } else {
@@ -358,30 +405,55 @@
     } catch (e) {
       showResult("denied", { detailText: "Network error — try again" });
     }
-  };
+  }
 
-  window.onTicketScanned = async function (code) {
+  async function handleTicket(code) {
     if (isOutOfService) { showState("out-of-service"); return; }
+    if (!registered) await registerDevice();
     showState("processing");
     try {
-      const res = await fetch(`${API_BASE}/validate-ticket`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code, validator_id: VALIDATOR_ID }),
-      });
-      const data = await res.json();
-      const text = (REASON_TEXT[data.reason] || (() => data.reason))(data);
-      showResult(data.approved ? "approved" : "denied", { detailText: text });
+      const res = await api("/validate-ticket", { module: "barcode", code });
+      showResult(res.data.approved ? "approved" : "denied", { detailText: describe(res) });
     } catch (e) {
       showResult("denied", { detailText: "Network error — try again" });
     }
+  }
+
+  window.onCardTapped = (value) => handleCard("nfc", String(value).trim());
+  window.onTicketScanned = (code) => handleTicket(String(code).trim());
+  window.onBarcodeScanned = (value) => {
+    value = String(value).trim();
+    // A BP number is a card; anything else scanned from a barcode/QR is a ticket code.
+    if (/^BP\d{10}$/i.test(value)) handleCard("barcode", value.toUpperCase());
+    else handleTicket(value);
   };
+
+  // ---- keyboard-wedge input ----
+  // Some readers present themselves as a keyboard: they "type" the scan and press
+  // Enter. Characters arriving faster than a human can type are collected and
+  // routed here. NFC reads are recognised by an "NFC:" or "MF" prefix, or by
+  // looking like a tag UID (8/14/20 hex characters); everything else is a barcode.
+  let wedgeBuf = "", wedgeLast = 0;
+  window.addEventListener("keydown", (e) => {
+    if (!WEDGE_ENABLED || e.target.tagName === "INPUT") return;
+    const now = Date.now();
+    if (e.key === "Enter") {
+      const value = wedgeBuf.trim(); wedgeBuf = "";
+      if (value.length < 4) return;
+      if (/^(NFC:|MF)/i.test(value)) window.onCardTapped(value.replace(/^NFC:/i, ""));
+      else if (/^([0-9A-F]{8}|[0-9A-F]{14}|[0-9A-F]{20})$/i.test(value)) window.onCardTapped(value);
+      else window.onBarcodeScanned(value);
+    } else if (e.key.length === 1) {
+      if (now - wedgeLast > 100) wedgeBuf = "";   // a pause means a human, not a reader
+      wedgeBuf += e.key; wedgeLast = now;
+    }
+  });
 
   // ---- dev/test helpers ----
   function devTap() { window.onCardTapped(document.getElementById("dev-card").value.trim()); }
-  function devScan() { window.onTicketScanned(document.getElementById("dev-code").value.trim()); }
+  function devScan() { window.onBarcodeScanned(document.getElementById("dev-code").value.trim()); }
   window.addEventListener("keydown", (e) => {
-    if (e.key === "d") document.getElementById("devpanel").classList.toggle("active");
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "d") document.getElementById("devpanel").classList.toggle("active");
   });
 </script>
 
