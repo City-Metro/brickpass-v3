@@ -77,6 +77,9 @@
   .status-pill.out_of_service, .status-pill.blocked, .status-pill.deactivated { background: var(--cm-red-bg); color: var(--cm-red); }
   .status-pill.lost { background: var(--cm-amber-bg); color: var(--cm-amber); }
   .status-pill.normal { background: var(--cm-gray-bg); color: var(--cm-black); }
+  .chip { display: inline-block; font-size: 11px; padding: 2px 8px; margin: 1px 3px 1px 0; border-radius: 999px; background: var(--cm-gray-bg); color: var(--cm-black); font-family: Helvetica, Arial, sans-serif; }
+  .key-box { font-family: monospace; font-size: 13px; background: #FFF8E6; border: 1px solid #F0D58C; border-radius: 6px; padding: 10px; margin-top: 12px; word-break: break-all; }
+  .id-row { display: flex; justify-content: space-between; align-items: center; font-family: monospace; font-size: 13px; padding: 6px 0; border-bottom: 1px solid var(--cm-line); }
   .status-pill.free { background: var(--cm-green-bg); color: var(--cm-green); }
   .status-pill.override { background: var(--cm-amber-bg); color: var(--cm-amber); }
 
@@ -118,6 +121,7 @@
     <a class="nav-authed-only" onclick="go('ticket-types')">Ticket Types</a>
     <a class="nav-authed-only" onclick="go('special-days')">Special Days</a>
     <a class="nav-authed-only" onclick="go('validators')">Validators</a>
+    <a class="nav-authed-only" onclick="go('devices')">Devices</a>
     <a class="nav-authed-only" onclick="signOut()">Sign Out</a>
   </nav>
   <button class="hamburger-btn" onclick="toggleMobileNav()" aria-label="Menu">
@@ -129,6 +133,7 @@
     <a class="nav-authed-only" onclick="toggleMobileNav(); go('ticket-types')">Ticket Types</a>
     <a class="nav-authed-only" onclick="toggleMobileNav(); go('special-days')">Special Days</a>
     <a class="nav-authed-only" onclick="toggleMobileNav(); go('validators')">Validators</a>
+    <a class="nav-authed-only" onclick="toggleMobileNav(); go('devices')">Devices</a>
     <a class="nav-authed-only" onclick="toggleMobileNav(); signOut()">Sign Out</a>
   </div>
 </header>
@@ -193,6 +198,15 @@
       <input id="edit-assigned-email" type="email" placeholder="name@example.com" />
       <button onclick="saveCard()">Save Changes</button>
       <div id="card-save-msg"></div>
+
+      <h2 style="margin-top:22px">NFC Tag IDs</h2>
+      <p class="sub" style="margin-bottom:8px">Tags whose ID resolves to this card. Needed when a reader reports a tag's UID instead of the BP number.</p>
+      <div id="card-identifiers"></div>
+      <div class="row-inline" style="margin-top:8px">
+        <input id="new-identifier" placeholder="04A3B2C1 or 04:A3:B2:C1 or MF04A3B2C1" />
+        <button class="secondary" style="flex:0 0 auto; margin-top:0" onclick="addIdentifier()">Link Tag</button>
+      </div>
+      <div id="identifier-msg"></div>
 
       <h2 style="margin-top:22px">Recent Transactions</h2>
       <table>
@@ -295,6 +309,37 @@
   </section>
 
   <!-- ---------------- VALIDATORS ---------------- -->
+  <section id="view-devices" class="view">
+    <h1>Devices</h1>
+    <p class="sub">Every reader or terminal registers here. A device gets a key once, then reports which modules (NFC, barcode) it actually has — the API only accepts scans from modules a device has registered.</p>
+
+    <div class="panel">
+      <div id="devices-list"></div>
+      <div id="device-key-result"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Register a Device</h2>
+      <label for="dev-id">Device ID</label>
+      <input id="dev-id" placeholder="VAL100-01 or TOPUP-01" />
+      <div class="row-inline">
+        <div>
+          <label for="dev-kind">Kind</label>
+          <select id="dev-kind"><option value="validator">Validator (VAL100)</option><option value="topup">Top-up kiosk (NQuire)</option></select>
+        </div>
+        <div><label for="dev-label">Label (optional)</label><input id="dev-label" placeholder="Front desk" /></div>
+      </div>
+      <button onclick="registerDevice()">Register Device &amp; Get Key</button>
+      <div id="dev-msg"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Unrecognized Tags</h2>
+      <p class="sub" style="margin-bottom:10px">Tags or barcodes a device read that matched no card. Tap an unknown card on a registered device, then link it here.</p>
+      <div id="unknown-scans"></div>
+    </div>
+  </section>
+
   <section id="view-validators" class="view">
     <h1>Validators</h1>
     <p class="sub">Set a validator to charge normally, waive fares, charge a custom price, or go out of service. Updates reach the device within about 30 seconds.</p>
@@ -329,9 +374,9 @@
 </main>
 
 <script>
-  const API_BASE = "https://brickpassv3.felixfeger46.workers.dev";
+  const API_BASE = "https://mybrickpass-api.YOUR_WORKER.workers.dev";
   const SSO_LOGIN_URL = "https://sso.citymetro.xyz";
-  const GOOGLE_CLIENT_ID = "1053192556643-2q6uutt6h7kouo9r94havjpmtp3f6qoc.apps.googleusercontent.com";
+  const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com";
   let session = { token: localStorage.getItem("cm_admin_token") || null };
 
   window.onload = () => {
@@ -354,22 +399,21 @@
     if (view === "ticket-types") loadTicketTypes();
     if (view === "special-days") loadSpecialDays();
     if (view === "validators") loadValidators();
+    if (view === "devices") { loadDevices(); loadUnknownScans(); }
   }
 
+  // Sign-in goes through Authentik, handled by the Worker: /auth/login sends you to Authentik, and
+  // you come back with an HttpOnly session COOKIE — nothing to store in the page. (A Google sign-in
+  // still uses a bearer token, kept in localStorage below.)
   function signInWithSSO() {
-    const redirect = encodeURIComponent(window.location.origin + window.location.pathname);
-    window.location.href = `${SSO_LOGIN_URL}?redirect=${redirect}`;
-  }
-  async function handleSsoCallback() {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get("token");
-    if (!token) return false;
-    localStorage.setItem("cm_admin_token", token);
-    session.token = token;
-    history.replaceState({}, "", window.location.pathname);
-    return true;
+    window.location.href = `${API_BASE}/auth/login?return_to=${encodeURIComponent(window.location.pathname)}`;
   }
   function signOut() {
+    // Clears the cookie session and ends the Authentik session, then returns to the app.
+    localStorage.removeItem("cm_admin_token");
+    window.location.href = `${API_BASE}/auth/logout`;
+  }
+  function showSignedOut() {
     localStorage.removeItem("cm_admin_token");
     session.token = null;
     document.body.classList.remove("signed-in");
@@ -383,6 +427,7 @@
     try {
       return await fetch(`${API_BASE}${path}`, {
         ...options,
+        credentials: "include", // send the Authentik session cookie
         headers: { "content-type": "application/json", ...(options.headers || {}), ...(session.token ? { authorization: `Bearer ${session.token}` } : {}) },
       });
     } catch (networkErr) {
@@ -398,9 +443,10 @@
         `<div class="msg error">Couldn't reach the server at<br><code>${API_BASE}</code><br><br>Check the Worker URL and that it's deployed.</div>`;
       return false;
     }
+    if (res.status === 401) { showSignedOut(); return false; } // just not signed in — show the sign-in button, no error
     if (res.status === 403) {
       document.getElementById("signin-msg").innerHTML = `<div class="msg error">This account doesn't have admin access.</div>`;
-      signOut(); return false;
+      showSignedOut(); return false;
     }
     if (!res.ok) { document.getElementById("signin-msg").innerHTML = `<div class="msg error">Sign-in failed (status ${res.status}) — try again.</div>`; return false; }
     document.body.classList.add("signed-in");
@@ -439,6 +485,8 @@
       ? new Date(data.card.pass_expires_at * 1000).toISOString().slice(0, 10) : "";
     document.getElementById("edit-assigned-email").value = data.card.assigned_email || (data.owner ? data.owner.email : "") || "";
 
+    renderIdentifiers(data.identifiers || []);
+    document.getElementById("identifier-msg").innerHTML = "";
     document.getElementById("card-txns").innerHTML = data.transactions.map(t => `
       <tr>
         <td class="nomono">${new Date(t.created_at * 1000).toLocaleString()}</td>
@@ -602,6 +650,118 @@
     const mode = document.querySelector('input[name="val-mode"]:checked').value;
     document.getElementById("val-override-field").style.display = mode === "override" ? "block" : "none";
   }
+  // ---- devices ----
+  // Scanned/typed text can be hostile (anyone can hold up a QR code containing HTML),
+  // so everything interpolated into innerHTML below goes through esc().
+  function esc(v) {
+    return String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  async function loadDevices() {
+    const res = await authedFetch("/admin/devices");
+    const devices = await res.json();
+    document.getElementById("devices-list").innerHTML = devices.length
+      ? `<table><thead><tr><th>Device</th><th>Modules (reported)</th><th>Status</th><th>Last seen</th><th></th></tr></thead><tbody>${
+          devices.map(d => `
+            <tr>
+              <td class="nomono"><b>${esc(d.device_id)}</b><br><span class="sub">${esc(d.kind)}${d.label ? " — " + esc(d.label) : ""}${d.model ? "<br>" + esc(d.model) : ""}</span></td>
+              <td class="nomono">${d.modules.length ? d.modules.map(m => `<span class="chip">${esc(m)}</span>`).join("") : '<span class="sub">none yet — device hasn\'t registered</span>'}</td>
+              <td class="nomono"><span class="status-pill ${d.status === "active" ? "active" : "blocked"}">${esc(d.status)}</span></td>
+              <td class="nomono">${d.last_seen_at ? new Date(d.last_seen_at * 1000).toLocaleString() : "Never"}</td>
+              <td class="nomono">
+                <button class="small secondary" onclick="rotateDeviceKey('${esc(d.device_id)}')">New key</button>
+                <button class="small ${d.status === "active" ? "danger" : "secondary"}" onclick="setDeviceStatus('${esc(d.device_id)}', '${d.status === "active" ? "revoked" : "active"}')">${d.status === "active" ? "Revoke" : "Re-activate"}</button>
+              </td>
+            </tr>`).join("")
+        }</tbody></table>`
+      : `<p class="sub">No devices yet — register one below.</p>`;
+  }
+
+  function showDeviceKey(deviceId, apiKey) {
+    document.getElementById("device-key-result").innerHTML =
+      `<div class="key-box"><b>Key for ${esc(deviceId)} — copy it now, it won't be shown again:</b><br>${esc(apiKey)}</div>`;
+  }
+
+  async function registerDevice() {
+    const device_id = document.getElementById("dev-id").value.trim();
+    const kind = document.getElementById("dev-kind").value;
+    const label = document.getElementById("dev-label").value.trim();
+    const msgEl = document.getElementById("dev-msg");
+    msgEl.innerHTML = "";
+    const res = await authedFetch("/admin/devices", { method: "POST", body: JSON.stringify({ device_id, kind, label: label || undefined }) });
+    const data = await res.json();
+    if (!res.ok) { msgEl.innerHTML = `<div class="msg error">${esc(data.error)}</div>`; return; }
+    showDeviceKey(data.device_id, data.api_key);
+    document.getElementById("dev-id").value = ""; document.getElementById("dev-label").value = "";
+    loadDevices();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function rotateDeviceKey(deviceId) {
+    if (!confirm(`Issue a new key for ${deviceId}? The old key stops working immediately.`)) return;
+    const res = await authedFetch(`/admin/devices/${encodeURIComponent(deviceId)}/rotate-key`, { method: "POST" });
+    const data = await res.json();
+    if (res.ok) { showDeviceKey(data.device_id, data.api_key); window.scrollTo({ top: 0, behavior: "smooth" }); }
+  }
+
+  async function setDeviceStatus(deviceId, status) {
+    await authedFetch(`/admin/devices/${encodeURIComponent(deviceId)}`, { method: "PATCH", body: JSON.stringify({ status }) });
+    loadDevices();
+  }
+
+  async function loadUnknownScans() {
+    const res = await authedFetch("/admin/unknown-scans");
+    const rows = await res.json();
+    document.getElementById("unknown-scans").innerHTML = rows.length
+      ? `<table><thead><tr><th>Read</th><th>Seen</th><th>Link to card</th></tr></thead><tbody>${
+          rows.map((u, i) => `
+            <tr>
+              <td class="nomono">${esc(u.identifier)}<br><span class="sub">${esc(u.module || "")} · ${esc(u.device_id || "")}</span></td>
+              <td class="nomono">${esc(u.scan_count)}× · ${new Date(u.last_seen_at * 1000).toLocaleString()}</td>
+              <td class="nomono">
+                <input id="unk-card-${i}" placeholder="BP##########" style="width:130px; display:inline-block" />
+                <button class="small secondary" onclick="linkUnknown(${i}, '${esc(u.identifier)}')">Link</button>
+                <button class="small danger" onclick="dismissUnknown('${esc(u.identifier)}')">Dismiss</button>
+              </td>
+            </tr>`).join("")
+        }</tbody></table>`
+      : `<p class="sub">Nothing unrecognized right now.</p>`;
+  }
+
+  async function linkUnknown(index, identifier) {
+    const cardNumber = document.getElementById(`unk-card-${index}`).value.trim();
+    if (!cardNumber) return;
+    const res = await authedFetch(`/admin/cards/${encodeURIComponent(cardNumber)}/identifiers`, { method: "POST", body: JSON.stringify({ identifier }) });
+    const data = await res.json();
+    if (!res.ok) { alert(data.error); return; }
+    loadUnknownScans();
+  }
+
+  async function dismissUnknown(identifier) {
+    await authedFetch(`/admin/unknown-scans/${encodeURIComponent(identifier)}`, { method: "DELETE" });
+    loadUnknownScans();
+  }
+
+  // ---- NFC tag IDs on a card ----
+  function renderIdentifiers(identifiers) {
+    document.getElementById("card-identifiers").innerHTML = identifiers.length
+      ? identifiers.map(i => `<div class="id-row"><span>${esc(i.identifier)}</span><button class="small danger" onclick="removeIdentifier('${esc(i.identifier)}')">Remove</button></div>`).join("")
+      : `<p class="sub">No tags linked.</p>`;
+  }
+  async function addIdentifier() {
+    const identifier = document.getElementById("new-identifier").value.trim();
+    const msgEl = document.getElementById("identifier-msg");
+    if (!identifier) return;
+    const res = await authedFetch(`/admin/cards/${encodeURIComponent(activeCardNumber)}/identifiers`, { method: "POST", body: JSON.stringify({ identifier }) });
+    const data = await res.json();
+    msgEl.innerHTML = res.ok ? `<div class="msg ok">Linked ${esc(data.identifier)}.</div>` : `<div class="msg error">${esc(data.error)}</div>`;
+    if (res.ok) { document.getElementById("new-identifier").value = ""; loadCard(activeCardNumber); }
+  }
+  async function removeIdentifier(identifier) {
+    await authedFetch(`/admin/identifiers/${encodeURIComponent(identifier)}`, { method: "DELETE" });
+    loadCard(activeCardNumber);
+  }
+
   async function loadValidators() {
     const res = await authedFetch("/admin/validators");
     const validators = await res.json();
@@ -638,8 +798,7 @@
 
   // ---- boot ----
   (async function init() {
-    await handleSsoCallback();
-    if (session.token) { await tryEnterAdmin(); }
+    await tryEnterAdmin(); // works for a cookie session or a stored Google token
   })();
 </script>
 
